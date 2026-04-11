@@ -8,14 +8,19 @@ import py7zr
 import requests
 from tqdm.auto import tqdm
 
-ROOT     = Path(__file__).resolve().parent.parent  # src/ -> project root
-DATA_DIR = ROOT / "data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+ROOT      = Path(__file__).resolve().parent.parent  # src/ -> project root
+RAW_DIR   = ROOT / "data" / "raw"
+PROC_DIR  = ROOT / "data" / "processed"
+RAW_DIR.mkdir(parents=True, exist_ok=True)
+PROC_DIR.mkdir(parents=True, exist_ok=True)
 
-HOURLY_PARQUET = DATA_DIR / "bicing_hourly.parquet"
-INFO_PARQUET   = DATA_DIR / "bicing_stations.parquet"
-METEO_PARQUET  = DATA_DIR / "meteo_barcelona.parquet"
-FULL_PARQUET   = DATA_DIR / "bicing_full.parquet"
+# Keep DATA_DIR pointing to raw for .7z discovery
+DATA_DIR = RAW_DIR
+
+HOURLY_PARQUET = PROC_DIR / "bicing_hourly.parquet"
+INFO_PARQUET   = PROC_DIR / "bicing_stations.parquet"
+METEO_PARQUET  = PROC_DIR / "meteo_barcelona.parquet"
+FULL_PARQUET   = PROC_DIR / "bicing_full.parquet"
 
 MONTH_NAMES_CAT = {
     1: "Gener",    2: "Febrer",   3: "Marc",    4: "Abril",
