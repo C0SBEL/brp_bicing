@@ -35,6 +35,10 @@ ENV/
 *.feather
 *.h5
 *.hdf5
+*.7z
+
+# Claude Code local config
+.claude/
 
 # OS
 .DS_Store
