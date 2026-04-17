@@ -3,7 +3,29 @@
     "allow": [
       "Bash(python:*)",
       "Bash(python3:*)",
-      "Bash(iconv -f UTF-8 -t UTF-8)"
+      "Bash(iconv -f UTF-8 -t UTF-8)",
+      "Bash(.venv/bin/python3 -c ' *)",
+      "Bash(.venv/bin/python3 -c \"import tensorflow as tf; import optuna; import sklearn; import pandas; import numpy; print\\('TF:', tf.__version__\\); print\\('Optuna:', optuna.__version__\\); print\\('sklearn:', sklearn.__version__\\)\")",
+      "Bash(.venv/bin/pip list *)",
+      "Bash(pip list *)",
+      "Bash(pip3 list *)",
+      "Bash(/opt/anaconda3/bin/python -c \"import xgboost; import optuna; import sklearn; import tensorflow; import keras; print\\('xgboost:', xgboost.__version__\\); print\\('optuna:', optuna.__version__\\); print\\('sklearn:', sklearn.__version__\\); print\\('tensorflow:', tensorflow.__version__\\); print\\('keras:', keras.__version__\\)\")",
+      "Bash(/opt/anaconda3/bin/python -c \"import xgboost; import optuna; import sklearn; print\\('xgboost:', xgboost.__version__\\); print\\('optuna:', optuna.__version__\\); print\\('sklearn:', sklearn.__version__\\); print\\('NO tensorflow'\\)\")",
+      "Bash(/opt/anaconda3/bin/pip list *)",
+      "Bash(/opt/anaconda3/bin/python --version)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python3 -c \"import tensorflow; print\\('TF version:', tensorflow.__version__\\); import keras; print\\('Keras:', keras.__version__\\)\")",
+      "Bash(.venv/bin/python3 -c \"import tensorflow as tf; import keras; print\\('TF:', tf.__version__\\); print\\('Keras:', keras.__version__\\)\")",
+      "Bash(.venv/bin/pip show *)",
+      "Bash(.venv/bin/python3 -c \"import tensorflow as tf; print\\('TF:', tf.__version__\\)\")",
+      "Bash(.venv/bin/python3 -c \"import setuptools; print\\(setuptools.__version__\\); import distutils; print\\('distutils OK'\\)\")",
+      "Bash(SETUPTOOLS_USE_DISTUTILS=stdlib .venv/bin/python3 -c \"import tensorflow as tf; print\\('TF:', tf.__version__\\)\")",
+      "Bash(.venv/bin/python3)",
+      "Bash(.venv/bin/jupyter nbconvert *)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(.venv/bin/python -c \"import setuptools; print\\(setuptools.__version__\\)\")",
+      "Bash(.venv/bin/python -c \"import tensorflow; print\\(tensorflow.__version__\\)\")",
+      "Bash(awk '{print $1, $2, $9, $10, $11}')"
     ]
   }
 }
