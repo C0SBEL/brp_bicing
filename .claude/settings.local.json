@@ -1,5 +1,6 @@
 {
   "permissions": {
+    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash(python:*)",
       "Bash(python3:*)",
@@ -25,7 +26,18 @@
       "Bash(echo \"PID: $!\")",
       "Bash(.venv/bin/python -c \"import setuptools; print\\(setuptools.__version__\\)\")",
       "Bash(.venv/bin/python -c \"import tensorflow; print\\(tensorflow.__version__\\)\")",
-      "Bash(awk '{print $1, $2, $9, $10, $11}')"
+      "Bash(awk '{print $1, $2, $9, $10, $11}')",
+      "Bash(ps -p 73285 -o pid,etime,pcpu,pmem,command)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python)",
+      "Bash(awk '{print \"running:\", $2, \"cpu:\", $3}')",
+      "Bash(awk '{print \"pid:\", $2, \"cpu:\", $3, \"time:\", $9, $10}')",
+      "Bash(awk '{print \"pid:\", $2, \"cpu%:\", $3, \"cpu_time:\", $10}')",
+      "Bash(awk '{print \"cpu_time:\", $10, \"cpu%:\", $3}')",
+      "Bash(pkill -f \"jupyter-nbconvert.*LSTM\")",
+      "Bash(pkill -f \"ipykernel.*77079\")",
+      "Bash(awk '{print \"killed:\", $2}')",
+      "Skill(update-config)"
     ]
   }
 }
