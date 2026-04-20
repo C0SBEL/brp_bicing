@@ -1,0 +1,17 @@
+holidays
+pandas
+numpy
+pyarrow
+py7zr
+requests
+tqdm
+xgboost
+scikit-learn
+tensorflow
+matplotlib
+seaborn
+plotly
+folium
+statsmodels
+scipy
+optuna

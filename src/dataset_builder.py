@@ -1,20 +1,36 @@
+"""
+Pipeline de construcción del dataset para el proyecto BRP Bicing Barcelona.
+
+Descarga, descomprime y agrega los datos brutos del Bicing (estado de estaciones,
+metadatos e información meteorológica) y los combina en un único parquet listo para
+el análisis exploratorio y el entrenamiento de modelos.
+
+Uso:
+    python src/dataset_builder.py
+
+Los archivos .7z mensuales deben estar previamente descargados en data/raw/.
+Fuente: https://opendata-ajuntament.barcelona.cat/data/es/dataset/estat-estacions-bicing
+"""
+
 import shutil
 import tempfile
 import time
 from pathlib import Path
 
+import holidays
 import pandas as pd
 import py7zr
 import requests
 from tqdm.auto import tqdm
 
-ROOT      = Path(__file__).resolve().parent.parent  # src/ -> project root
-RAW_DIR   = ROOT / "data" / "raw"
-PROC_DIR  = ROOT / "data" / "processed"
+# Constants
+
+ROOT     = Path(__file__).resolve().parent.parent
+RAW_DIR  = ROOT / "data" / "raw"
+PROC_DIR = ROOT / "data" / "processed"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 PROC_DIR.mkdir(parents=True, exist_ok=True)
 
-# Keep DATA_DIR pointing to raw for .7z discovery
 DATA_DIR = RAW_DIR
 
 HOURLY_PARQUET = PROC_DIR / "bicing_hourly.parquet"
@@ -28,67 +44,48 @@ MONTH_NAMES_CAT = {
     9: "Setembre", 10: "Octubre", 11: "Novembre", 12: "Desembre",
 }
 
+# Período de estudio: oct 2023 – sep 2025
 TARGET_MONTHS = (
-    [(2023, m) for m in range(10, 13)] +  # oct-dic 2023
-    [(2024, m) for m in range(1,  13)] +  # ene-dic 2024
-    [(2025, m) for m in range(1,  10)]    # ene-sep 2025
+    [(2023, m) for m in range(10, 13)] +
+    [(2024, m) for m in range(1,  13)] +
+    [(2025, m) for m in range(1,  10)]
 )
 
-FESTIVOS_BCN = {
-    # 2023
-    "2023-01-06": ("Reyes",                       "E"),
-    "2023-04-07": ("Viernes Santo",               "E"),
-    "2023-04-10": ("Lunes de Pascua",             "A"),
-    "2023-05-01": ("Día del Trabajo",             "E"),
-    "2023-06-05": ("Pascua Granada",              "L"),
-    "2023-06-24": ("Sant Joan",                   "A"),
-    "2023-08-15": ("Asunción",                    "E"),
-    "2023-09-11": ("Diada Nacional de Catalunya", "A"),
-    "2023-09-24": ("La Mercè",                    "L"),
-    "2023-10-12": ("Fiesta Nacional de España",   "E"),
-    "2023-11-01": ("Todos los Santos",            "E"),
-    "2023-12-06": ("Día de la Constitución",      "E"),
-    "2023-12-08": ("La Inmaculada",               "E"),
-    "2023-12-25": ("Navidad",                     "E"),
-    "2023-12-26": ("Sant Esteve",                 "A"),
-    # 2024
-    "2024-01-01": ("Año Nuevo",                   "E"),
-    "2024-01-06": ("Reyes",                       "E"),
-    "2024-03-29": ("Viernes Santo",               "E"),
-    "2024-04-01": ("Lunes de Pascua",             "A"),
-    "2024-05-01": ("Día del Trabajo",             "E"),
-    "2024-06-09": ("Pascua Granada",              "L"),
-    "2024-06-24": ("Sant Joan",                   "A"),
-    "2024-08-15": ("Asunción",                    "E"),
-    "2024-09-11": ("Diada Nacional de Catalunya", "A"),
-    "2024-09-24": ("La Mercè",                    "L"),
-    "2024-11-01": ("Todos los Santos",            "E"),
-    "2024-12-06": ("Día de la Constitución",      "E"),
-    "2024-12-25": ("Navidad",                     "E"),
-    "2024-12-26": ("Sant Esteve",                 "A"),
-    # 2025
-    "2025-01-01": ("Año Nuevo",                   "E"),
-    "2025-01-06": ("Reyes",                       "E"),
-    "2025-04-18": ("Viernes Santo",               "E"),
-    "2025-04-21": ("Lunes de Pascua",             "A"),
-    "2025-05-01": ("Día del Trabajo",             "E"),
-    "2025-06-09": ("Pascua Granada",              "L"),
-    "2025-06-24": ("Sant Joan",                   "A"),
-    "2025-08-15": ("Asunción",                    "E"),
-    "2025-09-11": ("Diada Nacional de Catalunya", "A"),
-    "2025-09-24": ("La Mercè",                    "L"),
-    "2025-10-13": ("Fiesta Nacional de España",   "E"),
-    "2025-11-01": ("Todos los Santos",            "E"),
-    "2025-12-08": ("La Inmaculada",               "E"),
-    "2025-12-25": ("Navidad",                     "E"),
-    "2025-12-26": ("Sant Esteve",                 "A"),
+# Festivos estatales + autonómicos (Cataluña) calculados automáticamente.
+_YEARS = range(2023, 2026)
+_cat_holidays = holidays.Spain(subdiv="CT", years=_YEARS)
+
+# Festivos locales de Barcelona no cubiertos por la librería.
+# La Mercè es siempre el 24 de septiembre; Pascua Granada es el lunes de Pentecostés.
+_BCN_LOCAL = {
+    "2023-06-05": "Pascua Granada", "2023-09-24": "La Mercè",
+    "2024-06-09": "Pascua Granada", "2024-09-24": "La Mercè",
+    "2025-06-09": "Pascua Granada", "2025-09-24": "La Mercè",
 }
 
-festivos_set = {pd.Timestamp(d) for d in FESTIVOS_BCN}
+# Conjunto unificado para lookup O(1) en enrich_tipo_dia
+festivos_set = (
+    {pd.Timestamp(d) for d in _cat_holidays}
+    | {pd.Timestamp(d) for d in _BCN_LOCAL}
+)
 
+# Funciones auxiliares
 
 def parse_7z(path: Path) -> "pd.DataFrame | None":
-    """Descomprime .7z, lee CSV y agrega a nivel horario por station_id."""
+    """
+    Lee un archivo .7z mensual del Bicing y devuelve la telemetría agregada a nivel horario.
+
+    Descomprime el archivo en un directorio temporal, lee el CSV interior,
+    convierte el timestamp Unix a hora local (Europe/Madrid) y agrega por
+    (station_id, hora) calculando la media de las columnas numéricas disponibles.
+
+    Args:
+        path: Ruta al archivo .7z mensual.
+
+    Returns:
+        DataFrame con columnas [station_id, hora, num_bikes_available,
+        num_docks_available, num_bikes_available_types.*], o None si hay error.
+    """
     try:
         with py7zr.SevenZipFile(path, mode="r") as z:
             csv_name = next((n for n in z.getnames() if n.endswith(".csv")), None)
@@ -142,6 +139,7 @@ def parse_7z(path: Path) -> "pd.DataFrame | None":
         .reset_index()
     )
 
+    # Normaliza nombres de columna si el CSV usa alias cortos
     for alias, canon in [
         ("mechanical", "num_bikes_available_types.mechanical"),
         ("electrical", "num_bikes_available_types.electrical"),
@@ -151,11 +149,21 @@ def parse_7z(path: Path) -> "pd.DataFrame | None":
 
     return agg
 
-
 def enrich_tipo_dia(df: pd.DataFrame) -> pd.DataFrame:
-    """Añade columnas de tipo de día a un DataFrame con columna 'hora'."""
+    """
+    Añade columnas de clasificación temporal a un DataFrame con columna 'hora'.
+
+    Columnas añadidas: fecha, dia_semana (0=lun…6=dom), es_finde, es_festivo,
+    es_laboral, tipo_dia ('Laborable' | 'Fin de semana' | 'Festivo').
+
+    Args:
+        df: DataFrame con columna 'hora' de tipo datetime.
+
+    Returns:
+        El mismo DataFrame con las columnas de tipo de día añadidas in-place.
+    """
     df["fecha"]      = df["hora"].dt.normalize()
-    df["dia_semana"] = df["hora"].dt.dayofweek   # 0=lun … 6=dom
+    df["dia_semana"] = df["hora"].dt.dayofweek
     df["es_finde"]   = df["dia_semana"] >= 5
     df["es_festivo"] = df["fecha"].isin(festivos_set)
     df["es_laboral"] = ~df["es_finde"] & ~df["es_festivo"]
@@ -164,12 +172,26 @@ def enrich_tipo_dia(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[df["es_festivo"], "tipo_dia"] = "Festivo"
     return df
 
+# Funciones de construcción de parquets
+
 def build_hourly() -> pd.DataFrame:
-    """Crea bicing_hourly.parquet a partir de los .7z mensuales."""
+    """
+    Construye bicing_hourly.parquet procesando los .7z mensuales uno a uno.
+
+    Si el parquet ya existe en disco lo carga directamente sin reprocesar.
+    Procesa cada mes en memoria de forma independiente para evitar cargar
+    los ~250M de registros brutos simultáneamente.
+
+    Returns:
+        DataFrame horario con columnas de telemetría y tipo de día,
+        acotado al período oct 2023 – sep 2025.
+
+    Raises:
+        RuntimeError: si no se encuentra ningún archivo .7z en data/raw/.
+    """
     if HOURLY_PARQUET.exists():
         print(f"Cargando {HOURLY_PARQUET} existente...")
-        bicing_hourly = pd.read_parquet(HOURLY_PARQUET)
-        return enrich_tipo_dia(bicing_hourly)
+        return enrich_tipo_dia(pd.read_parquet(HOURLY_PARQUET))
 
     monthly_dfs: list[pd.DataFrame] = []
     errors: list[str] = []
@@ -196,7 +218,7 @@ def build_hourly() -> pd.DataFrame:
             "Descarga los .7z desde:\n"
             "  https://opendata-ajuntament.barcelona.cat/data/es/dataset/"
             "estat-estacions-bicing\n"
-            "y cópialos en la carpeta data/"
+            "y cópialos en la carpeta data/raw/"
         )
 
     bicing_hourly = pd.concat(monthly_dfs, ignore_index=True)
@@ -214,9 +236,22 @@ def build_hourly() -> pd.DataFrame:
 
     return enrich_tipo_dia(bicing_hourly)
 
-
 def build_stations() -> pd.DataFrame:
-    """Crea bicing_stations.parquet a partir del .7z de INFORMACIO."""
+    """
+    Construye bicing_stations.parquet a partir del .7z de información estática.
+
+    Lee el archivo *INFORMACIO*.7z más reciente disponible en data/raw/,
+    descarta columnas vacías o con valor constante y elimina duplicados de
+    station_id conservando el registro más reciente.
+
+    Returns:
+        DataFrame con metadatos de estación (station_id, nombre, coordenadas,
+        altitud, capacidad, etc.).
+
+    Raises:
+        FileNotFoundError: si no hay ningún *INFORMACIO*.7z en data/raw/.
+        ValueError: si el .7z no contiene ningún CSV.
+    """
     if INFO_PARQUET.exists():
         print(f"Cargando {INFO_PARQUET} existente...")
         return pd.read_parquet(INFO_PARQUET)
@@ -224,11 +259,11 @@ def build_stations() -> pd.DataFrame:
     candidatos = sorted(DATA_DIR.glob("*INFORMACIO*.7z"))
     if not candidatos:
         raise FileNotFoundError(
-            "No se encontró ningún fichero *INFORMACIO*.7z en data/\n"
+            "No se encontró ningún fichero *INFORMACIO*.7z en data/raw/\n"
             "Descárgalo desde:\n"
             "  https://opendata-ajuntament.barcelona.cat/data/es/dataset/"
             "informacio-estacions-bicing\n"
-            "y cópialo en la carpeta data/"
+            "y cópialo en la carpeta data/raw/"
         )
 
     info_path = candidatos[-1]
@@ -265,9 +300,21 @@ def build_stations() -> pd.DataFrame:
     print(f"bicing_stations.parquet guardado ({len(estaciones)} estaciones)")
     return estaciones
 
-
 def build_meteo() -> pd.DataFrame:
-    """Descarga meteorología de Open-Meteo y crea meteo_barcelona.parquet."""
+    """
+    Descarga datos meteorológicos horarios de Open-Meteo y crea meteo_barcelona.parquet.
+
+    Consulta la API de archivo de Open-Meteo para Barcelona (lat=41.3874, lon=2.1686)
+    con reintentos exponenciales (hasta 3 intentos). Variables descargadas:
+    temperature_2m, precipitation, relative_humidity_2m, wind_speed_10m,
+    surface_pressure, weather_code.
+
+    Returns:
+        DataFrame con columna 'hora' (datetime) y las seis variables meteorológicas.
+
+    Raises:
+        RuntimeError: si la descarga falla tras 3 intentos.
+    """
     if METEO_PARQUET.exists():
         print(f"Cargando {METEO_PARQUET} existente...")
         return pd.read_parquet(METEO_PARQUET)
@@ -303,19 +350,35 @@ def build_meteo() -> pd.DataFrame:
     print(f"meteo_barcelona.parquet guardado ({len(meteo):,} filas)")
     return meteo
 
+def build_full(
+    bicing_hourly: pd.DataFrame,
+    estaciones: pd.DataFrame,
+    meteo: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Combina los tres datasets en bicing_full.parquet mediante LEFT JOINs sucesivos.
 
-def build_full(bicing_hourly: pd.DataFrame,
-               estaciones: pd.DataFrame,
-               meteo: pd.DataFrame) -> pd.DataFrame:
+    Orden de joins: bicing_hourly → meteo (por hora) → estaciones (por station_id).
+    Elimina filas sin metadatos de estación (name nulo) y optimiza dtypes a
+    float32 para columnas numéricas y category para tipo_dia.
+
+    Args:
+        bicing_hourly: Telemetría horaria agregada (salida de build_hourly).
+        estaciones:    Metadatos estáticos de estación (salida de build_stations).
+        meteo:         Variables meteorológicas horarias (salida de build_meteo).
+
+    Returns:
+        DataFrame integrado guardado en bicing_full.parquet.
+    """
     if FULL_PARQUET.exists():
         print(f"Cargando {FULL_PARQUET} existente...")
         return pd.read_parquet(FULL_PARQUET)
 
     df = bicing_hourly.merge(meteo, on="hora", how="left")
-    print(f"Tras merge meteo    : {df.shape[0]:,} filas, {df.shape[1]} cols")
+    print(f"Tras merge meteo     : {df.shape[0]:,} filas, {df.shape[1]} cols")
 
     df = df.merge(estaciones, on="station_id", how="left")
-    print(f"Tras merge estacion : {df.shape[0]:,} filas, {df.shape[1]} cols")
+    print(f"Tras merge estaciones: {df.shape[0]:,} filas, {df.shape[1]} cols")
 
     n_before = len(df)
     df = df.dropna(subset=["name"])
@@ -336,9 +399,8 @@ def build_full(bicing_hourly: pd.DataFrame,
         df["tipo_dia"] = df["tipo_dia"].astype("category")
 
     df.to_parquet(FULL_PARQUET, index=False, compression="snappy")
-    print(f"✔ bicing_full.parquet guardado ({len(df):,} filas)")
+    print(f"bicing_full.parquet guardado ({len(df):,} filas)")
     return df
-
 
 if __name__ == "__main__":
     print("=" * 60)
@@ -360,5 +422,5 @@ if __name__ == "__main__":
     print(f"  Columnas: {list(df.columns)}")
 
     print("\n" + "=" * 60)
-    print("Parquets generados correctamente en data/")
+    print("Parquets generados correctamente en data/processed/")
     print("=" * 60)
